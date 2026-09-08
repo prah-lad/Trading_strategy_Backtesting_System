@@ -11,10 +11,12 @@ CSCI 4890 Senior Project - Youngstown State University
 - Database: PostgreSQL
 
 ## Running Locally
+
 Backend:
     cd backend
     source venv/bin/activate
     python -m uvicorn app.main:app --reload
+    
 Frontend:
     cd frontend
     npm run dev
