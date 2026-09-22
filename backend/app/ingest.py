@@ -1,47 +1,27 @@
-import os
 import sys
-from datetime import datetime
 from decimal import Decimal
 
-import requests
-from dotenv import load_dotenv
-from sqlalchemy.exc import IntegrityError
+import yfinance as yf
 
 from app.database import SessionLocal
 from app.models import Ticker, PriceData
 
-load_dotenv()
 
-API_KEY = os.getenv("ALPHAVANTAGE_API_KEY")
-BASE_URL = "https://www.alphavantage.co/query"
+def fetch_daily(symbol: str):
+    """
+    Fetch full daily history from Yahoo Finance.
 
+    auto_adjust=True applies split and dividend adjustments directly to
+    the OHLC columns, so prices stay continuous across split events.
+    Returns a pandas DataFrame indexed by date.
+    """
+    ticker = yf.Ticker(symbol)
+    df = ticker.history(period="max", auto_adjust=True)
 
-def fetch_daily_adjusted(symbol: str) -> dict:
-    """Call Alpha Vantage and return the raw time series dict."""
-    params = {
-        "function": "TIME_SERIES_DAILY_ADJUSTED",
-        "symbol": symbol,
-        "outputsize": "full",
-        "apikey": API_KEY,
-    }
+    if df.empty:
+        raise RuntimeError(f"No data returned for {symbol}")
 
-    response = requests.get(BASE_URL, params=params, timeout=30)
-    response.raise_for_status()
-    payload = response.json()
-
-    # Alpha Vantage returns HTTP 200 even for errors, so inspect the body.
-    if "Note" in payload:
-        raise RuntimeError(f"Rate limit hit: {payload['Note']}")
-    if "Information" in payload:
-        raise RuntimeError(f"API returned: {payload['Information']}")
-    if "Error Message" in payload:
-        raise RuntimeError(f"Bad symbol or request: {payload['Error Message']}")
-
-    series = payload.get("Time Series (Daily)")
-    if not series:
-        raise RuntimeError(f"No time series in response. Keys: {list(payload)}")
-
-    return series
+    return df
 
 
 def get_or_create_ticker(session, symbol: str) -> Ticker:
@@ -49,7 +29,7 @@ def get_or_create_ticker(session, symbol: str) -> Ticker:
     if ticker is None:
         ticker = Ticker(symbol=symbol)
         session.add(ticker)
-        session.flush()   # assigns ticker.id without committing yet
+        session.flush()
     return ticker
 
 
@@ -58,41 +38,37 @@ def ingest_symbol(symbol: str) -> int:
     session = SessionLocal()
 
     try:
-        series = fetch_daily_adjusted(symbol)
+        df = fetch_daily(symbol)
         ticker = get_or_create_ticker(session, symbol)
 
-        # Dates we already have, so re-running skips them instead of erroring.
         existing = {
-            row[0]
-            for row in session.query(PriceData.date)
-                              .filter_by(ticker_id=ticker.id)
-                              .all()
+            row[0] for row in
+            session.query(PriceData.date).filter_by(ticker_id=ticker.id).all()
         }
 
         new_rows = []
-        for date_str, fields in series.items():
-            row_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        for timestamp, row in df.iterrows():
+            row_date = timestamp.date()
             if row_date in existing:
                 continue
 
+            close = Decimal(str(round(row["Close"], 4)))
             new_rows.append(PriceData(
                 ticker_id=ticker.id,
                 date=row_date,
-                open=Decimal(fields["1. open"]),
-                high=Decimal(fields["2. high"]),
-                low=Decimal(fields["3. low"]),
-                close=Decimal(fields["4. close"]),
-                adjusted_close=Decimal(fields["5. adjusted close"]),
-                volume=int(fields["6. volume"]),
+                open=Decimal(str(round(row["Open"], 4))),
+                high=Decimal(str(round(row["High"], 4))),
+                low=Decimal(str(round(row["Low"], 4))),
+                close=close,
+                # auto_adjust bakes adjustments into OHLC, so these match.
+                adjusted_close=close,
+                volume=int(row["Volume"]),
             ))
 
         session.bulk_save_objects(new_rows)
         session.commit()
         return len(new_rows)
 
-    except IntegrityError:
-        session.rollback()
-        raise
     except Exception:
         session.rollback()
         raise
