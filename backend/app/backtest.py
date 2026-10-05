@@ -105,16 +105,19 @@ def sma_crossover(short_window=20, long_window=50):
     return strategy
 
 
-if __name__ == "__main__":
-    symbol = sys.argv[1] if len(sys.argv) > 1 else "AAPL"
+def buy_and_hold():
+    """BUY on the first day, then hold forever. Baseline strategy for comparison."""
+    def strategy(bars):
+        return "BUY" if len(bars) == 1 else "HOLD"
+    return strategy
 
-    result = run_backtest(symbol, sma_crossover())
 
+def print_result(symbol, label, result):
     start_value = result.equity_curve[0][1]
     end_value = result.equity_curve[-1][1]
     total_return = (end_value - start_value) / start_value * 100
 
-    print(f"{symbol} backtest ({result.equity_curve[0][0]} to {result.equity_curve[-1][0]})")
+    print(f"{symbol} — {label} ({result.equity_curve[0][0]} to {result.equity_curve[-1][0]})")
     print(f"  Starting value: ${start_value:,.2f}")
     print(f"  Ending value:   ${end_value:,.2f}")
     print(f"  Total return:   {total_return:.2f}%")
@@ -123,3 +126,11 @@ if __name__ == "__main__":
         print(f"    {t.date}  {t.action:4}  {t.shares:5} sh @ ${t.price:.2f}  cash=${t.cash_after:,.2f}")
     if len(result.trades) > 10:
         print(f"    ... and {len(result.trades) - 10} more")
+    print()
+
+
+if __name__ == "__main__":
+    symbol = sys.argv[1] if len(sys.argv) > 1 else "AAPL"
+
+    print_result(symbol, "Buy & Hold", run_backtest(symbol, buy_and_hold()))
+    print_result(symbol, "SMA 20/50 Crossover", run_backtest(symbol, sma_crossover()))
