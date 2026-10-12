@@ -81,25 +81,56 @@ def run_backtest(symbol, strategy, starting_cash=STARTING_CASH):
     return BacktestResult(equity_curve=equity_curve, trades=trades)
 
 
+def sma(closes, window):
+    """Simple moving average of the last `window` closes."""
+    return sum(closes[-window:]) / window
+
+
+def rsi(closes, window=14):
+    """
+    Relative Strength Index over the last `window` price changes.
+    Uses a simple (non-Wilder-smoothed) average of gains/losses, which is
+    easier to hand-verify than Wilder's exponential smoothing.
+    Returns None if there isn't enough history yet.
+    """
+    if len(closes) < window + 1:
+        return None
+    changes = [closes[i] - closes[i - 1] for i in range(-window, 0)]
+    avg_gain = sum((c for c in changes if c > 0), Decimal(0)) / window
+    avg_loss = sum((-c for c in changes if c < 0), Decimal(0)) / window
+    if avg_loss == 0:
+        return Decimal(100) if avg_gain > 0 else Decimal(50)
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
+
 def sma_crossover(short_window=20, long_window=50):
     """BUY when the short moving average crosses above the long one, SELL on the reverse cross."""
     def strategy(bars):
         if len(bars) < long_window + 1:
             return "HOLD"
         closes = [b.close for b in bars]
-
-        def avg(window):
-            return sum(closes[-window:]) / window
-
-        def avg_prev(window):
-            return sum(closes[-window - 1:-1]) / window
-
-        short_avg, long_avg = avg(short_window), avg(long_window)
-        prev_short, prev_long = avg_prev(short_window), avg_prev(long_window)
+        short_avg, long_avg = sma(closes, short_window), sma(closes, long_window)
+        prev_short, prev_long = sma(closes[:-1], short_window), sma(closes[:-1], long_window)
 
         if prev_short <= prev_long and short_avg > long_avg:
             return "BUY"
         if prev_short >= prev_long and short_avg < long_avg:
+            return "SELL"
+        return "HOLD"
+    return strategy
+
+
+def rsi_strategy(window=14, oversold=30, overbought=70):
+    """BUY when RSI recovers back above the oversold line, SELL when it drops back below the overbought line."""
+    def strategy(bars):
+        closes = [b.close for b in bars]
+        current, previous = rsi(closes, window), rsi(closes[:-1], window)
+        if current is None or previous is None:
+            return "HOLD"
+        if previous <= oversold < current:
+            return "BUY"
+        if previous >= overbought > current:
             return "SELL"
         return "HOLD"
     return strategy
@@ -134,3 +165,4 @@ if __name__ == "__main__":
 
     print_result(symbol, "Buy & Hold", run_backtest(symbol, buy_and_hold()))
     print_result(symbol, "SMA 20/50 Crossover", run_backtest(symbol, sma_crossover()))
+    print_result(symbol, "RSI 14 (30/70)", run_backtest(symbol, rsi_strategy()))
