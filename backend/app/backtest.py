@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from datetime import date as Date
 from decimal import Decimal
 
+import matplotlib.pyplot as plt
+
 from app.database import SessionLocal
 from app.models import Ticker, PriceData
 
@@ -160,9 +162,36 @@ def print_result(symbol, label, result):
     print()
 
 
+def plot_equity_curves(symbol, labeled_results, out_path):
+    """Save a PNG chart overlaying each strategy's equity curve for one ticker."""
+    plt.figure(figsize=(10, 6))
+    for label, result in labeled_results:
+        dates = [d for d, _ in result.equity_curve]
+        values = [v for _, v in result.equity_curve]
+        plt.plot(dates, values, label=label)
+
+    plt.yscale("log")  # returns span orders of magnitude, so a linear axis hides everything but Buy & Hold
+    plt.xlabel("Date")
+    plt.ylabel("Portfolio Value ($, log scale)")
+    plt.title(f"{symbol} — Equity Curve by Strategy")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(out_path)
+    plt.close()
+
+
 if __name__ == "__main__":
     symbol = sys.argv[1] if len(sys.argv) > 1 else "AAPL"
 
-    print_result(symbol, "Buy & Hold", run_backtest(symbol, buy_and_hold()))
-    print_result(symbol, "SMA 20/50 Crossover", run_backtest(symbol, sma_crossover()))
-    print_result(symbol, "RSI 14 (30/70)", run_backtest(symbol, rsi_strategy()))
+    labeled_results = [
+        ("Buy & Hold", run_backtest(symbol, buy_and_hold())),
+        ("SMA 20/50 Crossover", run_backtest(symbol, sma_crossover())),
+        ("RSI 14 (30/70)", run_backtest(symbol, rsi_strategy())),
+    ]
+
+    for label, result in labeled_results:
+        print_result(symbol, label, result)
+
+    chart_path = f"{symbol}_equity_curve.png"
+    plot_equity_curves(symbol, labeled_results, chart_path)
+    print(f"Equity curve chart saved to {chart_path}")
